@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# 編輯器 / IDE
+.idea/
+*.swp
+*.swo
+
+# 日誌與暫存
+*.log
+*.tmp
+tmp/
