@@ -46,6 +46,26 @@ SPINNER_FRAMES=(".  " ".. " "..." "   ")
 # 用來檢視配色；調完改回 0。
 FAKE_DEMO=0
 
+# ============================================================
+# 排除規則（關鍵字陣列；空陣列 = 不排除）
+#
+# 每個類別各自一份清單，填入的是「純關鍵字」不是正則 —— 只要目標字串
+# 含有其中任一個關鍵字就整筆略過。不需要跳脫，寫什麼就比對什麼。
+#
+# 分類別而非單一全域清單，是為了避免誤殺：填 "Bash" 想擋 hook 時，
+# 不會連 🔧 的 Bash 一起消失。
+#
+# 排除發生在統計之前（逐筆篩掉），不是事後扣次數，混雜時也不會算錯。
+# 某類別全被排光時，該區段整段不顯示，後面區段的顏色自動往前遞補。
+#
+# 實際填法見 config.sh。
+# ============================================================
+EXCLUDE_HOOK=()    # 🪝 比對 hook 的「指令全文 + 事件名」
+EXCLUDE_TOOL=()    # 🔧 比對工具名，如 "TodoWrite"
+EXCLUDE_SKILL=()   # 🎯 比對 skill 名與 slash command 名
+EXCLUDE_MCP=()     # 🔌 比對 MCP server 名，如 "claude_ai_Notion"
+EXCLUDE_AGENT=()   # 🤖 比對 subagent 名，如 "Explore"
+
 # shellcheck source=/dev/null
 [ -f "$USER_CONFIG" ] && . "$USER_CONFIG"
 
@@ -80,6 +100,14 @@ else
 fi
 
 PALETTE_JSON=$(printf '%s\n' "${PALETTE[@]}" | jq -Rs 'split("\n") | map(select(length > 0))')
+
+# bash 陣列 → JSON 陣列（空陣列會得到 []）
+to_json_array() { printf '%s\n' "$@" | jq -Rs 'split("\n") | map(select(length > 0))'; }
+EX_HOOK_JSON=$(to_json_array "${EXCLUDE_HOOK[@]}")
+EX_TOOL_JSON=$(to_json_array "${EXCLUDE_TOOL[@]}")
+EX_SKILL_JSON=$(to_json_array "${EXCLUDE_SKILL[@]}")
+EX_MCP_JSON=$(to_json_array "${EXCLUDE_MCP[@]}")
+EX_AGENT_JSON=$(to_json_array "${EXCLUDE_AGENT[@]}")
 SPINNER_FRAME="${SPINNER_FRAMES[$(( $(date +%s) % ${#SPINNER_FRAMES[@]} ))]}"
 
 render() {
@@ -89,8 +117,18 @@ jq -rs \
   --arg     c_sep    "$C_SEP" \
   --arg     c_spin   "$C_SPIN" \
   --arg     spinner  "$SPINNER_FRAME" \
-  --argjson palette  "$PALETTE_JSON" \
+  --argjson palette   "$PALETTE_JSON" \
+  --argjson ex_hook   "$EX_HOOK_JSON" \
+  --argjson ex_tool   "$EX_TOOL_JSON" \
+  --argjson ex_skill  "$EX_SKILL_JSON" \
+  --argjson ex_mcp    "$EX_MCP_JSON" \
+  --argjson ex_agent  "$EX_AGENT_JSON" \
   '
+  # ---- 排除判定：輸入字串含有清單中任一關鍵字即為 true ----
+  # 關鍵字必須先綁成 $k：直接寫 contains(.) 的話，. 會被前面的 $s| 重新綁定
+  # 成待比對字串本身，變成「自己包含自己」而永遠成立。
+  def excluded($list): . as $s | any($list[]; . as $k | $s | contains($k));
+
   # ---- 只看主線（排除 subagent 內部的 sidechain 訊息）----
   map(select(.isSidechain != true))
 
@@ -127,18 +165,21 @@ jq -rs \
                  | select(.type=="tool_use")
                  | select(.name | startswith("mcp__") | not)
                  | select(.name != "Skill" and .name != "Agent" and .name != "Task")
-                 | .name ],
+                 | .name
+                 | select(excluded($ex_tool) | not) ],
 
       mcp: [ .[] | select(.type=="assistant")
              | (.message.content // [])[]
              | select(.type=="tool_use")
              | select(.name | startswith("mcp__"))
-             | (.name | split("__") | .[1]) ],
+             | (.name | split("__") | .[1])
+             | select(excluded($ex_mcp) | not) ],
 
       skill: [ .[] | select(.type=="assistant")
                | (.message.content // [])[]
                | select(.type=="tool_use" and .name=="Skill")
-               | (.input.skill // "?") ],
+               | (.input.skill // "?")
+               | select(excluded($ex_skill) | not) ],
 
       cmd: [ .[] | select(.type=="user")
              | (if (.message.content|type)=="string"
@@ -146,15 +187,29 @@ jq -rs \
                 else ((.message.content // []) | map(select(.type=="text") | .text) | join(" "))
                 end)
              | capture("<command-name>/?(?<n>[^<]+)</command-name>"; "g")
-             | .n ],
+             | .n
+             | select(excluded($ex_skill) | not) ],
 
       agent: [ .[] | select(.type=="assistant")
                | (.message.content // [])[]
                | select(.type=="tool_use" and (.name=="Agent" or .name=="Task"))
-               | (.input.subagent_type // "general-purpose") ],
+               | (.input.subagent_type // "general-purpose")
+               | select(excluded($ex_agent) | not) ],
 
+      # hook 沒有「誰註冊的」欄位，但每筆都帶 command（該 hook 執行的指令全文），
+      # 第三方工具的指令通常含自己的路徑，比對它即可精準排除。
+      # 關鍵字同時比對指令全文與事件名，兩者任一含有即排除；欄位缺漏一律 // "" 保底。
+      # hook_ 開頭的 attachment 有兩種語意不同的東西：
+      #   hook_success        —— 執行紀錄（真的跑了一次）
+      #   hook_system_message —— 該次執行要求顯示的訊息，供歷史重播用
+      # 兩者成對出現，只認執行紀錄，否則凡是會吐 systemMessage 的 hook
+      # 次數都會被灌成兩倍（例如 ccc-divider 的分隔線）。
+      # 用排除法而非白名單，是為了讓未來新增的失敗／阻擋類事件仍算得到。
       hook: [ .[] | select(.type=="attachment")
-              | select(.attachment.type // "" | startswith("hook_"))
+              | select((.attachment.type // "") as $t
+                       | ($t | startswith("hook_")) and $t != "hook_system_message")
+              | select((((.attachment.command // "") + " " + (.attachment.hookName // ""))
+                        | excluded($ex_hook)) | not)
               | (.attachment.hookName // "?" | split(":")[0]) ]
     }
 

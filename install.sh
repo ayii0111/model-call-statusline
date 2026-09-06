@@ -11,12 +11,15 @@
 set -e
 
 NAME="statusline-model-call"
-RAW_URL="https://raw.githubusercontent.com/ayii0111/statusline-model-call/main/statusline/model-call.sh"
+RAW_BASE="https://raw.githubusercontent.com/ayii0111/statusline-model-call/main/statusline"
+RAW_URL="$RAW_BASE/model-call.sh"
+RAW_CONFIG_URL="$RAW_BASE/config.sh"
 
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS="$CLAUDE_DIR/settings.json"
 TOOL_DIR="$CLAUDE_DIR/$NAME"
 TOOL_SH="$TOOL_DIR/model-call.sh"
+TOOL_CONFIG="$TOOL_DIR/config.sh"
 WRAPPER="$CLAUDE_DIR/statusline-wrapper.sh"
 
 BEGIN_MARK="# >>> $NAME >>>"
@@ -33,7 +36,8 @@ squote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
 # ---- 1. 放置工具腳本 ----
 # 本機有原始碼就用本機的，curl | bash 的情境則從 GitHub 抓。
-SRC="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/statusline/model-call.sh"
+SRC_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/statusline"
+SRC="$SRC_DIR/model-call.sh"
 mkdir -p "$TOOL_DIR"
 if [ -f "$SRC" ]; then
   cp "$SRC" "$TOOL_SH"
@@ -45,6 +49,21 @@ else
 fi
 chmod +x "$TOOL_SH"
 echo "· 已安裝腳本：$TOOL_SH"
+
+# ---- 1b. 放置設定檔（已存在就絕不覆蓋，那是使用者自己的）----
+if [ -f "$TOOL_CONFIG" ]; then
+  echo "· 設定檔已存在，保留不動：$TOOL_CONFIG"
+else
+  if [ -f "$SRC_DIR/config.sh" ]; then
+    cp "$SRC_DIR/config.sh" "$TOOL_CONFIG"
+  else
+    curl -fsSL "$RAW_CONFIG_URL" -o "$TOOL_CONFIG" || {
+      echo "✗ 無法取得 config.sh。" >&2
+      exit 1
+    }
+  fi
+  echo "· 已建立設定檔（範例全為註解）：$TOOL_CONFIG"
+fi
 
 # ---- 2. 讀取現況 ----
 [ -f "$SETTINGS" ] || printf '{}\n' > "$SETTINGS"

@@ -87,12 +87,44 @@ run 'bash "/Users/you/.claude/statusline-model-call/model-call.sh"'
   `statusLine` 欄位維持指向入口檔。唯一例外：若移除後入口檔已無任何工具，
   留著只會讓 statusLine 變空白，此時會一併刪除入口檔並清空該欄位。
 
-`config.sh` 是你自己的配色覆寫，一律保留不刪。
+`config.sh` 是你自己的設定，一律保留不刪。
+
+## 設定檔
+
+install.sh 會在 `~/.claude/statusline-model-call/config.sh` 放一份設定檔，
+**裡面所有項目預設都是註解**，拿掉 `#` 才生效，沒動就是本工具的預設行為。
+
+它一旦存在，重跑 install.sh 更新時**不會**被覆蓋，uninstall 也不刪。
+
+## 排除不想看的項目
+
+有些工具（如 Orca）會註冊 hook 掛在每一次工具呼叫上，導致 🪝 區段長期被
+`PreToolUse×13 PostToolUse×12` 這類雜訊佔滿。五個類別都可以各自排除：
+
+```bash
+EXCLUDE_HOOK=( ".orca/agent-hooks" )   # 🪝 比對「指令全文 + 事件名」
+EXCLUDE_TOOL=( "TodoWrite" )           # 🔧 工具名
+EXCLUDE_SKILL=( "artifact-design" )    # 🎯 skill 與 slash command 名
+EXCLUDE_MCP=( "claude_ai_Notion" )     # 🔌 MCP server 名
+EXCLUDE_AGENT=( "general-purpose" )    # 🤖 subagent 名
+```
+
+填的是**純關鍵字不是正則** —— 目標字串含有其中任一個就整筆略過，不用跳脫，
+大小寫要一致。一個類別可填多個，任一命中即排除。
+
+hook 之所以要比對「指令全文」，是因為 transcript 的 hook 紀錄沒有「誰註冊的」
+這種欄位，但每筆都帶著它實際執行的指令，第三方工具的指令裡通常含有自己的
+安裝路徑 —— 比對那段就能精準排掉，且不會誤傷同名事件底下你自己的 hook。
+
+分類別而非單一全域清單，是為了避免誤殺：填 `Bash` 想擋 hook 時，不會連
+🔧 的 Bash 一起消失。
+
+排除發生在統計之前（逐筆篩掉），不是事後扣次數，混雜時也不會算錯。
+某類別全被排光時，該區段整段不顯示，後面區段的顏色自動往前遞補。
 
 ## 自訂配色
 
-建立 `~/.claude/statusline-model-call/config.sh`，覆寫任一變數即可，
-重跑 install.sh 更新不會蓋掉它：
+一樣寫在 `config.sh`：
 
 ```bash
 C_PREFIX="204;113;120"   # #CC7178 前綴
